@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>五子棋</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="五子棋">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<style>
+  :root {
+    --bg: #1e1e2e; --panel: #282840; --accent: #c77d5a;
+    --fg: #ddd; --dim: #888; --board: #DEB887; --line: #5D4037;
+    --btn: #383860; --btn-hover: #4a4a80;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--fg);
+    display: flex; justify-content: center; align-items: center;
+    min-height: 100vh; user-select: none;
+  }
+  .wrap {
+    display: flex; gap: 20px; align-items: flex-start; padding: 20px;
+  }
+  @media (max-width: 760px) { .wrap { flex-direction: column; align-items: center; } }
+  canvas { display: block; cursor: pointer; border-radius: 8px;
+           box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
+  .side {
+    width: 200px; background: var(--panel); border-radius: 14px;
+    padding: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .side h1 { font-size: 1.5rem; text-align: center; font-weight: 600; letter-spacing: 4px; }
+  .status { text-align: center; font-size: 0.95rem; padding: 8px;
+            background: rgba(255,255,255,0.04); border-radius: 8px; }
+  .status .sub { font-size: 0.75rem; color: var(--dim); margin-top: 2px; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row label { font-size: 0.8rem; color: var(--dim); white-space: nowrap; }
+  .row select { flex: 1; padding: 5px 6px; border-radius: 6px; border: 1px solid #444;
+                background: #2a2a40; color: var(--fg); font-size: 0.85rem; outline: none; }
+  button {
+    width: 100%; padding: 10px 0; border: none; border-radius: 8px;
+    font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: 0.15s;
+    letter-spacing: 1px;
+  }
+  .btn-new { background: var(--btn); color: var(--fg); }
+  .btn-new:hover { background: var(--btn-hover); }
+  .btn-undo { background: #444468; color: var(--fg); }
+  .btn-undo:hover { background: #555580; }
+  .btn-ai { background: var(--accent); color: #fff; }
+  .btn-ai:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .info { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--dim); }
+  .dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%;
+         vertical-align: middle; margin-right: 3px; }
+  .dot.b { background: radial-gradient(circle at 35% 35%, #555, #111); }
+  .dot.w { background: radial-gradient(circle at 35% 35%, #fff, #bbb); border: 1px solid #999; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="board"></canvas>
+  <div class="side">
+    <h1>五子棋</h1>
+    <div class="status">
+      <div id="status">连接中...</div>
+      <div class="sub" id="count"></div>
+    </div>
+    <div class="row">
+      <label>难度</label>
+      <select id="level">
+        <option value="easy">初级</option>
+        <option value="medium" selected>中级</option>
+        <option value="hard">高级</option>
+      </select>
+    </div>
+    <button class="btn-new" id="btnNew" onclick="newGame()" disabled>新游戏</button>
+    <button class="btn-undo" id="btnUndo" onclick="undo()" disabled>悔棋</button>
+    <button class="btn-ai"  id="btnAI"  onclick="aiFirst()" disabled>AI 先手</button>
+    <div class="info">
+      <span><span class="dot b"></span>玩家</span>
+      <span><span class="dot w"></span>AI</span>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<script>
+const N = 15, CELL = 36, MARG = 36, R = 15;
+const CW = N * CELL + MARG * 2;
+const STARS = [[3,3],[3,7],[3,11],[7,3],[7,7],[7,11],[11,3],[11,7],[11,11]];
+
+const cv  = document.getElementById('board');
+const ctx = cv.getContext('2d');
+cv.width = CW; cv.height = CW;
+
+let st = null, busy = false, hover = null;
+const socket = io();
+
+socket.on('connect', () => { setStatus('已就绪'); enable(true); });
+socket.on('state', s => { st = s; busy = false; updateStatus(); draw(); });
+socket.on('error', e => { busy = false; setStatus(e.msg); enable(true); });
+socket.on('disconnect', () => { setStatus('连接断开'); enable(false); });
+
+// ---- 绘图 ----
+function draw() {
+  ctx.clearRect(0, 0, CW, CW);
+  ctx.fillStyle = '#DEB887'; ctx.fillRect(0, 0, CW, CW);
+  ctx.strokeStyle = '#5D4037'; ctx.lineWidth = 1;
+  for (let i = 0; i < N; i++) {
+    const x = MARG + i * CELL;
+    ctx.beginPath(); ctx.moveTo(x, MARG); ctx.lineTo(x, MARG + (N-1)*CELL); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(MARG, x); ctx.lineTo(MARG + (N-1)*CELL, x); ctx.stroke();
+  }
+  ctx.fillStyle = '#5D4037';
+  for (const [sx, sy] of STARS) {
+    ctx.beginPath(); ctx.arc(MARG + sx*CELL, MARG + sy*CELL, 3, 0, Math.PI*2); ctx.fill();
+  }
+  if (!st) return;
+
+  for (let y = 0; y < N; y++)
+    for (let x = 0; x < N; x++)
+      if (st.grid[y][x]) stone(x, y, st.grid[y][x]);
+
+  if (st.line) {
+    ctx.strokeStyle = '#CC3333'; ctx.lineWidth = 2;
+    for (const {x,y} of st.line) {
+      ctx.beginPath(); ctx.arc(MARG + x*CELL, MARG + y*CELL, R+2, 0, Math.PI*2); ctx.stroke();
+    }
+  }
+
+  if (st.log.length) {
+    const {x, y, p} = st.log[st.log.length - 1];
+    ctx.fillStyle = p === 1 ? '#F5F5F5' : '#1A1A1A';
+    ctx.beginPath(); ctx.arc(MARG + x*CELL, MARG + y*CELL, 4, 0, Math.PI*2); ctx.fill();
+  }
+
+  if (hover && !st.over && !busy) {
+    const [hx, hy] = hover;
+    if (st.grid[hy][hx] === 0) {
+      ctx.strokeStyle = '#888'; ctx.lineWidth = 2;
+      ctx.setLineDash([3,3]);
+      ctx.beginPath(); ctx.arc(MARG + hx*CELL, MARG + hy*CELL, R-1, 0, Math.PI*2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+}
+
+function stone(x, y, p) {
+  const cx = MARG + x*CELL, cy = MARG + y*CELL;
+  // shadow
+  ctx.fillStyle = '#777';
+  ctx.beginPath(); ctx.arc(cx+1, cy+1, R, 0, Math.PI*2); ctx.fill();
+  // body
+  const g = ctx.createRadialGradient(cx-5, cy-5, 2, cx, cy, R);
+  if (p === 1) { g.addColorStop(0, '#555'); g.addColorStop(1, '#111'); }
+  else         { g.addColorStop(0, '#fff'); g.addColorStop(1, '#bbb'); }
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = p === 1 ? '#333' : '#BBB'; ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+// ---- 交互 ----
+cv.addEventListener('click', e => {
+  if (!st || st.over || busy) return;
+  const [x, y] = pixel(e); if (x == null) return;
+  busy = true; hover = null; setStatus('...'); enable(false);
+  socket.emit('play', {x, y});
+});
+
+cv.addEventListener('mousemove', e => {
+  if (!st || st.over || busy) return;
+  const [x, y] = pixel(e);
+  if (x == null) { if (hover) { hover = null; draw(); } return; }
+  if (!hover || hover[0] !== x || hover[1] !== y) { hover = [x, y]; draw(); }
+});
+
+cv.addEventListener('mouseleave', () => { if (hover) { hover = null; draw(); } });
+
+function pixel(e) {
+  const r = cv.getBoundingClientRect();
+  const sx = CW / r.width, sy = CW / r.height;
+  const px = (e.clientX - r.left) * sx, py = (e.clientY - r.top) * sy;
+  const x = Math.round((px - MARG) / CELL), y = Math.round((py - MARG) / CELL);
+  if (x < 0 || x >= N || y < 0 || y >= N) return [null, null];
+  const cx = MARG + x*CELL, cy = MARG + y*CELL;
+  if (Math.abs(px - cx) > CELL/2 || Math.abs(py - cy) > CELL/2) return [null, null];
+  return [x, y];
+}
+
+// ---- UI ----
+function setStatus(t) { document.getElementById('status').textContent = t; }
+function updateStatus() {
+  if (!st) return;
+  document.getElementById('count').textContent = st.log.length ? `共 ${st.log.length} 手` : '';
+  if (st.over) {
+    if (st.win === 0) setStatus('平局');
+    else if ((st.aiFirst && st.win === 1) || (!st.aiFirst && st.win === 2)) setStatus('AI 获胜');
+    else setStatus('你赢了');
+  } else if (busy) {
+    setStatus('思考中...');
+  } else {
+    setStatus(st.aiFirst ? '轮到你了（白棋）' : '轮到你了（黑棋）');
+  }
+  enable(!busy);
+}
+
+function enable(on) {
+  ['btnNew','btnUndo','btnAI'].forEach(id => document.getElementById(id).disabled = !on);
+}
+
+function newGame() {
+  const lvl = document.getElementById('level').value;
+  hover = null;
+  socket.emit('new_game', {level: lvl});
+  setStatus('新游戏');
+  enable(false);
+}
+
+function undo() {
+  socket.emit('undo');
+}
+
+function aiFirst() {
+  hover = null;
+  socket.emit('ai_first');
+  setStatus('AI 先手');
+  enable(false);
+}
+
+document.getElementById('level').addEventListener('change', () => {
+  socket.emit('set_level', {level: document.getElementById('level').value});
+});
+
+draw();
+</script>
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
+</script>
+</body>
+</html>

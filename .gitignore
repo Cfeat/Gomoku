@@ -1,0 +1,71 @@
+# ============================================================
+# 本地依赖与工具链（体积巨大，请自行安装）
+# ============================================================
+/dependency/
+/android-sdk/
+/ndk/
+/emsdk/
+
+# ============================================================
+# Rapfi 上游源码（请单独 clone / 使用 submodule，勿整仓塞进本仓库）
+#   git clone --depth 1 https://github.com/dhbloo/rapfi.git rapfi
+# ============================================================
+/rapfi/
+
+# ============================================================
+# 构建产物与发布包
+# ============================================================
+/dist/
+/build/
+*.spec
+*.apk
+*.aab
+*.apk.idsig
+*.ap_
+*.dex
+
+# Android / JNI 中间产物与本地 so（由 build_jni.py 生成）
+wuziqi_apk/build/
+wuziqi_apk/build_jni/
+wuziqi_apk/.gradle/
+wuziqi_apk/local.properties
+wuziqi_apk/app/build/
+wuziqi_apk/app/src/main/jniLibs/
+wuziqi_apk/**/debug.keystore
+wuziqi_apk/**/*.keystore
+wuziqi_apk/**/*.jks
+
+# APK assets 中的权重（与 engine/ 重复；打包时由 build_apk.py 自动拷贝）
+wuziqi_apk/app/src/main/assets/*.bin
+wuziqi_apk/app/src/main/assets/*.lz4
+wuziqi_apk/app/src/main/assets/*.bin.lz4
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+
+# ============================================================
+# IDE / 系统杂项
+# ============================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志与临时文件
+*.log
+*.tmp
+*.temp
+.cache/

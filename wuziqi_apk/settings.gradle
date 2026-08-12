@@ -1,0 +1,14 @@
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+dependencyResolution {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "Wuziqi"
+include ":app"

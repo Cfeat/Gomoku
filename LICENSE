@@ -1,0 +1,23 @@
+GNU GENERAL PUBLIC LICENSE
+Version 3, 29 June 2007
+
+Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+Everyone is permitted to copy and distribute verbatim copies
+of this license document, but changing it is not allowed.
+
+This project (Wuziqi frontends and packaging) is released under the
+GNU General Public License version 3.
+
+It incorporates / redistributes components derived from Rapfi
+(https://github.com/dhbloo/rapfi), which is licensed under GPLv3.
+When the Rapfi source tree is present locally, see also:
+  rapfi/Copying.txt
+  rapfi/AUTHORS
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+----------------------------------------------------------------------
+Full license text: https://www.gnu.org/licenses/gpl-3.0.txt
+
+SPDX-License-Identifier: GPL-3.0-only
