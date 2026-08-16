@@ -124,6 +124,16 @@ class Engine:
                 return alt
         return (ax, ay)
 
+    def takeback(self, n=1):
+        """同步悔棋：让引擎撤销最近 n 手，保持引擎内部棋盘与本地一致。"""
+        for _ in range(n):
+            with self._lock:
+                if not self._proc or self._proc.poll() is not None:
+                    raise RuntimeError("引擎未运行")
+                self._proc.stdin.write("TAKEBACK 0,0\n")
+                self._proc.stdin.flush()
+            self._read()  # 消费引擎返回的 "OK"
+
     def _read_alt_move(self):
         """尝试从 engine 的 bestline 中取第2步作为备选，模拟不完美落子。"""
         return None  # 保持用最优解，扰动不在坐标层做
@@ -204,12 +214,12 @@ class Board:
             return False
         # 如果最近一手是 AI（偶数手），也撤销
         self.log.pop()  # AI 的着法
-        self.log.pop()  # 玩家的着法
+        _, _, player = self.log.pop()  # 玩家的着法
         self.grid = [[0] * self.size for _ in range(self.size)]
         for x, y, p in self.log:
             self.grid[y][x] = p
         self.last = self.log[-1] if self.log else None
-        self.turn = 1
+        self.turn = player  # 撤销后仍轮到玩家落子（黑棋/白棋模式均正确）
         self.over = False
         self.win  = 0
         self.line = []
@@ -582,6 +592,12 @@ class App:
         if self.busy or self.board.over or len(self.board.log) < 2:
             return
         self.board.undo()
+        # 同步引擎内部棋盘：撤销引擎最后两手，避免引擎状态与本地棋盘脱节
+        if self.engine.alive:
+            try:
+                self.engine.takeback(2)
+            except Exception:
+                pass
         self._redraw()
         self.hover = None
         self._set_status("已悔棋，轮到你了")

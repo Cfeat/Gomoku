@@ -172,6 +172,17 @@ public class MainActivity extends Activity {
             applyDifficulty(timeoutMs, maxDepth);
             return "OK";
         }
+
+        @JavascriptInterface
+        public String takeback(int n) {
+            // Sync undo: roll back the last n plies inside the native engine
+            for (int i = 0; i < n; i++) {
+                write("TAKEBACK 0,0");
+                String r = read();
+                if (r == null || r.startsWith("ERROR")) return r;
+            }
+            return "OK";
+        }
     }
 
     @Override

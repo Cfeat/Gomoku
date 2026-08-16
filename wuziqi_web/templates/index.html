@@ -101,7 +101,13 @@ let st = null, busy = false, hover = null;
 const socket = io();
 
 socket.on('connect', () => { setStatus('已就绪'); enable(true); });
-socket.on('state', s => { st = s; busy = false; updateStatus(); draw(); });
+socket.on('state', s => {
+  st = s;
+  const humanColor = s.aiFirst ? 2 : 1;
+  // 等待 AI 落子期间保持 busy，避免玩家连下黑棋/白棋
+  busy = !s.over && s.turn !== humanColor;
+  updateStatus(); draw();
+});
 socket.on('error', e => { busy = false; setStatus(e.msg); enable(true); });
 socket.on('disconnect', () => { setStatus('连接断开'); enable(false); });
 

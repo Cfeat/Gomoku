@@ -282,10 +282,13 @@ function check(x, y) {
 
 function undo() {
   if (busy || st.over || st.log.length < 2) return;
-  st.log.pop(); st.log.pop();
+  st.log.pop();                    // AI 的着法
+  const player = st.log.pop().p;   // 玩家的着法
   st.grid = Array.from({ length: N }, () => Array(N).fill(0));
   for (const { x, y, p } of st.log) st.grid[y][x] = p;
-  st.turn = 1; st.over = false; st.win = 0; st.line = [];
+  st.turn = player; st.over = false; st.win = 0; st.line = [];
+  // 同步原生引擎内部棋盘，避免引擎状态与前端脱节
+  try { Engine.takeback(2); } catch (e) {}
   draw(); updateUI();
 }
 

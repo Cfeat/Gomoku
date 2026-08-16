@@ -107,6 +107,16 @@ class Engine:
                 return (int(m.group(1)), int(m.group(2)))
         return None
 
+    def takeback(self, n=1):
+        """同步悔棋：让引擎撤销最近 n 手，保持引擎内部棋盘与本地一致。"""
+        for _ in range(n):
+            with self._lock:
+                if not self._proc or self._proc.poll() is not None:
+                    raise RuntimeError("engine dead")
+                self._proc.stdin.write("TAKEBACK 0,0\n")
+                self._proc.stdin.flush()
+            self._read()  # 消费引擎返回的 "OK"
+
     def stop(self):
         if self._proc and self._proc.poll() is None:
             try:
@@ -137,6 +147,7 @@ class Game:
         self.win  = 0
         self.line = []
         self.ai_first = False
+        self.busy = False
 
     def move(self, x, y, player=None):
         if player is None:
@@ -162,12 +173,12 @@ class Game:
     def undo(self):
         if self.over or len(self.log) < 2:
             return False
-        self.log.pop()
-        self.log.pop()
+        self.log.pop()  # AI 的着法
+        p = self.log.pop()  # 玩家的着法
         self.grid = [[0] * BOARD_SIZE for _ in range(BOARD_SIZE)]
         for m in self.log:
             self.grid[m["y"]][m["x"]] = m["p"]
-        self.turn = 1
+        self.turn = p["p"]  # 撤销后仍轮到玩家落子（黑棋/白棋模式均正确）
         self.over = False
         self.win  = 0
         self.line = []
@@ -208,6 +219,7 @@ class Game:
 # ============================================================
 engine   = Engine()
 engine.configure("medium")
+engine_lock = threading.Lock()  # 引擎为全局单例，串行化所有读写，避免多会话交叉污染
 sessions = {}
 
 
@@ -238,8 +250,10 @@ def on_connect():
         fs["sid"] = sid
     g = Game()
     sessions[sid] = g
-    engine.start()
-    engine.init()
+    with engine_lock:
+        if not getattr(engine, "_proc", None) or engine._proc.poll() is not None:
+            engine.start()
+        engine.init()
     emit("state", g.to_dict())
 
 
@@ -254,42 +268,48 @@ def on_disconnect():
 @socketio.on("play")
 def on_play(data):
     g = _session()
-    if not g or g.over:
+    if not g or g.over or g.busy:
         return
     x, y = data["x"], data["y"]
     ok, msg = g.move(x, y)
     if not ok:
         emit("error", {"msg": msg})
         return
-    emit("state", g.to_dict())
-    if g.over:
-        return
 
-    ai = engine.turn(x, y)
-    if not ai:
-        emit("error", {"msg": "AI 未响应"})
-        return
-    ax, ay = ai
-    ok, msg = g.move(ax, ay)
-    if not ok:
-        emit("error", {"msg": f"AI 着法异常: {msg}"})
-        return
+    g.busy = True
+    try:
+        emit("state", g.to_dict())  # 立即反馈玩家落子
+        if g.over:
+            return
+
+        with engine_lock:
+            ai = engine.turn(x, y)
+        if not ai:
+            emit("error", {"msg": "AI 未响应"})
+            return
+        ax, ay = ai
+        ok, msg = g.move(ax, ay)
+        if not ok:
+            emit("error", {"msg": f"AI 着法异常: {msg}"})
+            return
+    finally:
+        g.busy = False
     emit("state", g.to_dict())
 
 
 @socketio.on("ai_first")
 def on_ai_first():
     g = _session()
-    if not g:
+    if not g or g.busy:
         return
     g.reset()
     g.ai_first = True
 
-    engine.stop()
-    engine.start()
-    engine.init()
-
-    m = engine.begin()
+    with engine_lock:
+        engine.stop()
+        engine.start()
+        engine.init()
+        m = engine.begin()
     if not m:
         emit("error", {"msg": "AI 未响应"})
         return
@@ -300,26 +320,33 @@ def on_ai_first():
 @socketio.on("new_game")
 def on_new_game(data=None):
     g = _session()
-    if not g:
+    if not g or g.busy:
         return
     lvl = data.get("level", "medium") if data else "medium"
     engine.configure(lvl)
     g.reset()
-    try:
-        engine.stop()
-    except Exception:
-        pass
-    engine.start()
-    engine.init()
+    with engine_lock:
+        try:
+            engine.stop()
+        except Exception:
+            pass
+        engine.start()
+        engine.init()
     emit("state", g.to_dict())
 
 
 @socketio.on("undo")
 def on_undo():
     g = _session()
-    if not g:
+    if not g or g.busy:
         return
     if g.undo():
+        # 同步引擎内部棋盘：撤销引擎最后两手
+        with engine_lock:
+            try:
+                engine.takeback(2)
+            except Exception:
+                pass
         emit("state", g.to_dict())
     else:
         emit("error", {"msg": "无法悔棋"})
