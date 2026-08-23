@@ -221,6 +221,26 @@ Java_com_wuziqi_app_MainActivity_resetWinrate(JNIEnv*, jclass) {
     g_depth.store(0);
 }
 
+JNIEXPORT jstring JNICALL
+Java_com_wuziqi_app_MainActivity_evaluate(JNIEnv* env, jclass) {
+    g_in.feed("TRACESEARCH");
+    for (int i = 0; i < 200 && g_running; i++) {
+        std::string line = g_out.getline();
+        if (line.empty()) continue;
+        size_t pos = line.find("Static Eval[Black]:");
+        if (pos == std::string::npos) continue;
+        size_t wpos = line.find("WDL", pos);
+        if (wpos == std::string::npos) continue;
+        const char* p = line.c_str() + wpos + 3;
+        while (*p == ' ') p++;
+        float wr = std::stof(p) / 100.0f;
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%f", wr);
+        return env->NewStringUTF(buf);
+    }
+    return env->NewStringUTF("");
+}
+
 JNIEXPORT void JNICALL
 Java_com_wuziqi_app_MainActivity_end(JNIEnv*, jclass) {
     g_in.stop();

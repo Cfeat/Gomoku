@@ -126,6 +126,31 @@ class Engine:
             if self._info_cb:
                 self._info_cb(self._info_depth, wr)
 
+    def _read_raw(self):
+        """读取一行原始输出（不过滤 MESSAGE/INFO 等）。"""
+        if not self._proc or self._proc.poll() is not None:
+            return None
+        line = self._proc.stdout.readline()
+        if not line:
+            return None
+        return line.strip()
+
+    def evaluate(self):
+        """评估当前局面，返回黑方胜率 [0,1]（失败返回 None）。发送 TRACESEARCH 并解析。"""
+        with self._lock:
+            if not self._proc or self._proc.poll() is not None:
+                return None
+            self._proc.stdin.write("TRACESEARCH\n")
+            self._proc.stdin.flush()
+        for _ in range(200):
+            line = self._read_raw()
+            if line is None:
+                return None
+            m = re.search(r"Static Eval\[Black\]:.*WDL\s+([\d.]+)", line)
+            if m:
+                return float(m.group(1)) / 100.0
+        return None
+
     def init_game(self, size=BOARD_SIZE):
         self._write(f"START {size}")
         if self._read() != "OK":
@@ -492,7 +517,7 @@ class App:
         c.delete("all")
         w = int(c["width"])
         h = int(c["height"])
-        bar_y0, bar_y1 = 20, h - 2
+        bar_y0, bar_y1 = 21, h - 3
         cx = w / 2.0
         half = w / 2.0
 
@@ -514,13 +539,13 @@ class App:
             white_adv = max(0.0, min(1.0, 2.0 * white_wr - 1.0))
 
         # 顶部角色 + 胜率标签
-        c.create_text(4, 10, anchor="w", text=f"黑（{black_tag}） {black_pct}",
-                      fill=C_FG, font=("Microsoft YaHei", 9, "bold"))
-        c.create_text(w - 4, 10, anchor="e", text=f"白（{white_tag}） {white_pct}",
-                      fill=C_FG, font=("Microsoft YaHei", 9, "bold"))
+        c.create_text(4, 11, anchor="w", text=f"黑（{black_tag}） {black_pct}",
+                      fill=C_FG, font=("Microsoft YaHei", 10, "bold"))
+        c.create_text(w - 4, 11, anchor="e", text=f"白（{white_tag}） {white_pct}",
+                      fill=C_FG, font=("Microsoft YaHei", 10, "bold"))
 
-        # 中性底色
-        c.create_rectangle(0, bar_y0, w, bar_y1, fill="#3A3A3A", outline="#555")
+        # 中性底色 + 细边框
+        c.create_rectangle(0, bar_y0, w, bar_y1, fill="#4A4A4A", outline="#666666")
         # 黑优势从中间向左延伸，白优势从中间向右延伸
         black_px = int(round(black_adv * half))
         white_px = int(round(white_adv * half))
@@ -701,13 +726,28 @@ class App:
             return
         self.board.undo()
         # 同步引擎内部棋盘：撤销引擎最后两手，避免引擎状态与本地棋盘脱节
+        black_wr = None
         if self.engine.alive:
             try:
                 self.engine.takeback(2)
             except Exception:
                 pass
+            # 悔棋后重新评估当前局面，让胜率条继续显示
+            try:
+                black_wr = self.engine.evaluate()
+            except Exception:
+                black_wr = None
+
+        if black_wr is not None:
+            # evaluate 返回黑方胜率，换算为引擎（AI 侧）胜率
+            self._winrate   = black_wr if self.ai_c == 1 else (1.0 - black_wr)
+            self._win_depth = None
+        else:
+            self._winrate   = None
+            self._win_depth = None
+
         self._redraw()
-        self._reset_winrate()
+        self._redraw_winrate()
         self.hover = None
         self._set_status("已悔棋，轮到你了")
         self._enable(True)

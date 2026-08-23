@@ -35,6 +35,7 @@ public class MainActivity extends Activity {
     private static native String  read();
     private static native String  readWinrate();
     private static native void    resetWinrate();
+    private static native String  evaluate();
     private static native void    end();
     private static native boolean isRunning();
 
@@ -167,6 +168,11 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public String winrate() {
             return readWinrate();
+        }
+
+        @JavascriptInterface
+        public String evaluate() {
+            return MainActivity.evaluate();  // 调用同名的静态 native 方法
         }
 
         @JavascriptInterface

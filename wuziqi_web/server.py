@@ -103,6 +103,31 @@ class Engine:
             if self._info_cb:
                 self._info_cb(self._info_depth, wr)
 
+    def _read_raw(self):
+        """读取一行原始输出（不过滤 MESSAGE/INFO 等）。"""
+        if not self._proc or self._proc.poll() is not None:
+            return None
+        line = self._proc.stdout.readline()
+        if not line:
+            return None
+        return line.strip()
+
+    def evaluate(self):
+        """评估当前局面，返回黑方胜率 [0,1]（失败返回 None）。发送 TRACESEARCH 并解析。"""
+        with self._lock:
+            if not self._proc or self._proc.poll() is not None:
+                return None
+            self._proc.stdin.write("TRACESEARCH\n")
+            self._proc.stdin.flush()
+        for _ in range(200):
+            line = self._read_raw()
+            if line is None:
+                return None
+            m = re.search(r"Static Eval\[Black\]:.*WDL\s+([\d.]+)", line)
+            if m:
+                return float(m.group(1)) / 100.0
+        return None
+
     def init(self, size=BOARD_SIZE):
         self._write(f"START {size}")
         if self._read() != "OK":
@@ -388,13 +413,18 @@ def on_undo():
     if not g or g.busy:
         return
     if g.undo():
-        # 同步引擎内部棋盘：撤销引擎最后两手
+        # 同步引擎内部棋盘：撤销引擎最后两手，并重新评估当前局面
+        black_wr = None
         with engine_lock:
             try:
                 engine.takeback(2)
+                black_wr = engine.evaluate()
             except Exception:
                 pass
         emit("state", g.to_dict())
+        if black_wr is not None:
+            ai_wr = black_wr if g.ai_first else (1.0 - black_wr)
+            emit("winrate", {"winrate": ai_wr, "depth": None})
     else:
         emit("error", {"msg": "无法悔棋"})
 
