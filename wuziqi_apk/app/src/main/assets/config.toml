@@ -9,7 +9,7 @@ message_mode = "brief"
 coord_conversion_mode = "none"
 default_candidate_range = "square3_line4"
 memory_reserved_mb = 0
-default_tt_size_kb = 8192
+default_tt_size_kb = 32768
 
 [model]
 binary_file = "model210901.bin"
