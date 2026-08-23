@@ -56,9 +56,15 @@ class Engine:
         self._depth = 10
         self._time  = 2000
         self._noise = 0.8
+        self._info_cb    = None   # 实时信息回调 cb(depth, winrate)，在搜索线程中调用
+        self._info_depth = 0
 
     def configure(self, difficulty):
         self._time, self._depth, self._noise = DIFFICULTY[difficulty]
+
+    def set_info_callback(self, cb):
+        """设置实时信息回调：cb(depth:int, winrate:float)。winrate 为引擎侧胜率 [0,1]。"""
+        self._info_cb = cb
 
     def start(self):
         if not os.path.exists(ENGINE_PATH):
@@ -94,9 +100,31 @@ class Engine:
             line = line.strip()
             if not line:
                 continue
-            if line.startswith(("MESSAGE", "INFO", "DEBUG", "ERROR")):
+            if line.startswith("INFO"):
+                self._handle_info(line)
+                continue
+            if line.startswith(("MESSAGE", "DEBUG", "ERROR")):
                 continue
             return line
+
+    def _handle_info(self, line):
+        """解析引擎实时 INFO 行（INFO DEPTH / INFO WINRATE ...），驱动胜率回调。"""
+        try:
+            _, key, val = line.split(None, 2)
+        except ValueError:
+            return
+        if key == "DEPTH":
+            try:
+                self._info_depth = int(val)
+            except ValueError:
+                pass
+        elif key == "WINRATE":
+            try:
+                wr = float(val)
+            except ValueError:
+                return
+            if self._info_cb:
+                self._info_cb(self._info_depth, wr)
 
     def init_game(self, size=BOARD_SIZE):
         self._write(f"START {size}")
@@ -105,6 +133,8 @@ class Engine:
         self._write(f"INFO TIMEOUT_TURN {self._time}")
         self._write(f"INFO MAX_DEPTH {self._depth}")
         self._write("INFO RULE 0")
+        self._write("INFO SHOW_DETAIL 2")  # 开启实时 INFO 输出（含 WINRATE / DEPTH / EVAL）
+        self._info_depth = 0
 
     def turn(self, x, y):
         with self._lock:
@@ -268,7 +298,11 @@ class App:
         self.gid      = 0
         self.diff     = DEFAULT_DIFFICULTY
 
+        self._winrate   = None   # 当前 AI 胜率 [0,1]；None 表示暂无数据
+        self._win_depth = None   # 对应的搜索深度
+
         self._build()
+        self.engine.set_info_callback(self._on_engine_info)
         self._launch()
         self.root.protocol("WM_DELETE_WINDOW", self._shutdown)
 
@@ -312,6 +346,11 @@ class App:
                                 bg=C_BOARD, highlightthickness=0)
         self.canvas.pack()
 
+        # 实时胜率条
+        self._win_canvas = tk.Canvas(frame, width=cw, height=40,
+                                     bg=C_BG, highlightthickness=0)
+        self._win_canvas.pack(fill=tk.X, pady=(6, 0))
+
         # 状态
         sf = tk.Frame(frame, bg=C_BG)
         sf.pack(fill=tk.X, pady=(6, 0))
@@ -328,6 +367,7 @@ class App:
         self.canvas.bind("<Leave>",        self._leave)
 
         self._redraw()
+        self._redraw_winrate()
 
     # ---------- 引擎生命周期 ----------
     def _launch(self):
@@ -427,6 +467,72 @@ class App:
                       fill="", outline="#888" if player == 1 else "#FFF",
                       width=1, tags="stone")
 
+    # ---------- 实时胜率 ----------
+    def _on_engine_info(self, depth, winrate):
+        """引擎搜索线程回调，切回主线程刷新胜率显示。"""
+        gid = self.gid
+        self.root.after(0, lambda: self._update_winrate(winrate, depth, gid))
+
+    def _update_winrate(self, winrate, depth, gid):
+        if gid != self.gid:
+            return
+        self._winrate   = max(0.0, min(1.0, float(winrate)))
+        self._win_depth = depth
+        self._redraw_winrate()
+
+    def _reset_winrate(self):
+        self._winrate   = None
+        self._win_depth = None
+        self._redraw_winrate()
+
+    def _redraw_winrate(self):
+        """围棋记谱式胜率条：黑优势从中间向左延伸、白优势从中间向右延伸，
+        并在括号中标注 AI / 玩家对应的执子颜色。"""
+        c = self._win_canvas
+        c.delete("all")
+        w = int(c["width"])
+        h = int(c["height"])
+        bar_y0, bar_y1 = 20, h - 2
+        cx = w / 2.0
+        half = w / 2.0
+
+        black_is_ai = self.ai_c == 1
+        black_tag = "AI" if black_is_ai else "玩家"
+        white_tag = "玩家" if black_is_ai else "AI"
+
+        if self._winrate is None:
+            black_pct = white_pct = "—"
+            black_adv = white_adv = 0.0
+        else:
+            ai_wr = max(0.0, min(1.0, float(self._winrate)))
+            black_wr = ai_wr if black_is_ai else 1.0 - ai_wr
+            white_wr = 1.0 - black_wr
+            black_pct = f"{black_wr * 100:.1f}%"
+            white_pct = f"{white_wr * 100:.1f}%"
+            # 优势量：胜率 0.5 → 0，1.0 → 1（此时另一方为 0）
+            black_adv = max(0.0, min(1.0, 2.0 * black_wr - 1.0))
+            white_adv = max(0.0, min(1.0, 2.0 * white_wr - 1.0))
+
+        # 顶部角色 + 胜率标签
+        c.create_text(4, 10, anchor="w", text=f"黑（{black_tag}） {black_pct}",
+                      fill=C_FG, font=("Microsoft YaHei", 9, "bold"))
+        c.create_text(w - 4, 10, anchor="e", text=f"白（{white_tag}） {white_pct}",
+                      fill=C_FG, font=("Microsoft YaHei", 9, "bold"))
+
+        # 中性底色
+        c.create_rectangle(0, bar_y0, w, bar_y1, fill="#3A3A3A", outline="#555")
+        # 黑优势从中间向左延伸，白优势从中间向右延伸
+        black_px = int(round(black_adv * half))
+        white_px = int(round(white_adv * half))
+        if black_px > 0:
+            c.create_rectangle(int(cx) - black_px, bar_y0, int(cx), bar_y1,
+                               fill=C_BLACK, outline="")
+        if white_px > 0:
+            c.create_rectangle(int(cx), bar_y0, int(cx) + white_px, bar_y1,
+                               fill=C_WHITE, outline="")
+        # 中线（均势点）
+        c.create_line(cx, bar_y0, cx, bar_y1, fill="#CC3333", width=2)
+
     # ---------- 交互 ----------
     def _click(self, e):
         if self.board.over or self.busy:
@@ -443,6 +549,7 @@ class App:
         if self.board.over:
             self._end()
             return
+        self._reset_winrate()
         self._ask_ai(x, y)
 
     def _move(self, e):
@@ -584,6 +691,7 @@ class App:
                 pass
         self._launch()
         self._redraw()
+        self._reset_winrate()
         self._count_lbl.config(text="")
         self._set_status("启动中...")
         self._enable(False)
@@ -599,6 +707,7 @@ class App:
             except Exception:
                 pass
         self._redraw()
+        self._reset_winrate()
         self.hover = None
         self._set_status("已悔棋，轮到你了")
         self._enable(True)
@@ -608,12 +717,16 @@ class App:
         w = self.board.win
         if w == self.human_c:
             s = "你赢了"
+            self._winrate, self._win_depth = 0.0, None
         elif w == self.ai_c:
             s = "AI 获胜"
+            self._winrate, self._win_depth = 1.0, None
         else:
             s = "平局"
+            self._winrate, self._win_depth = 0.5, None
         self._set_status(f"{s}  —  共 {len(self.board.log)} 手")
         self._count_lbl.config(text="")
+        self._redraw_winrate()
 
     def _on_diff_change(self, e=None):
         self.diff = self._diff_var.get()
@@ -642,7 +755,7 @@ def main():
     root = tk.Tk()
     cw = BOARD_SIZE * CELL_SIZE + MARGIN * 2
     ch = BOARD_SIZE * CELL_SIZE + MARGIN * 2
-    ww, wh = cw + 20, ch + 100
+    ww, wh = cw + 20, ch + 150
     x = (root.winfo_screenwidth()  - ww) // 2
     y = (root.winfo_screenheight() - wh) // 2
     root.geometry(f"{ww}x{wh}+{x}+{y}")

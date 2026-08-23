@@ -1,7 +1,6 @@
 // Service Worker for Wuziqi PWA
-const CACHE = 'wuziqi-v1';
+const CACHE = 'wuziqi-v2';
 const ASSETS = [
-  '/',
   '/static/manifest.json',
   '/static/icon-192.png',
   '/static/icon-512.png',
@@ -24,9 +23,10 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // Socket.IO requests bypass cache
+  // Socket.IO 请求不走缓存
   if (e.request.url.includes('socket.io')) return;
+  // 网络优先：保证 index.html 等总是最新；离线时回退到缓存
   e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request))
+    fetch(e.request).catch(() => caches.match(e.request))
   );
 });

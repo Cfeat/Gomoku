@@ -115,6 +115,17 @@
   }
   #status { font-size: 0.92rem; }
   #cnt { font-size: 0.78rem; color: var(--dim); white-space: nowrap; }
+  .winrate { display: flex; flex-direction: column; gap: 5px; }
+  .winrate-labels { display: flex; justify-content: space-between;
+                    font-size: 0.78rem; color: var(--dim); }
+  .winrate-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden;
+                 background: #3a3a3a; }
+  .winrate-half { width: 50%; height: 100%; display: flex; }
+  .winrate-half.left { justify-content: flex-end; border-right: 2px solid #CC3333; }
+  .winrate-half.right { justify-content: flex-start; }
+  .winrate-seg { height: 100%; width: 0; transition: width 0.15s ease; }
+  .winrate-seg.black { background: #1a1a1a; }
+  .winrate-seg.white { background: #f5f5f5; }
   .bar {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
@@ -191,6 +202,17 @@
   <div class="status-bar" id="statusBar">
     <div id="status">加载中...</div>
     <div id="cnt">0 手</div>
+  </div>
+
+  <div class="winrate">
+    <div class="winrate-labels">
+      <span id="blackLabel">黑（玩家）—</span>
+      <span id="whiteLabel">白（AI）—</span>
+    </div>
+    <div class="winrate-bar">
+      <div class="winrate-half left"><div class="winrate-seg black" id="blackSeg"></div></div>
+      <div class="winrate-half right"><div class="winrate-seg white" id="whiteSeg"></div></div>
+    </div>
   </div>
 
   <div class="bar">
@@ -289,7 +311,7 @@ function undo() {
   st.turn = player; st.over = false; st.win = 0; st.line = [];
   // 同步原生引擎内部棋盘，避免引擎状态与前端脱节
   try { Engine.takeback(2); } catch (e) {}
-  draw(); updateUI();
+  resetWinrate(); draw(); updateUI();
 }
 
 function drawBoardBg() {
@@ -429,7 +451,7 @@ function toBoardXY(clientX, clientY) {
 function playAt(x, y) {
   if (!st || st.over || busy || x == null) return;
   if (!move(x, y)) return;
-  hover = null; busy = true; draw(); updateUI();
+  hover = null; busy = true; resetWinrate(); draw(); updateUI();
   if (st.over) return;
   aiRespond(x, y);
 }
@@ -462,43 +484,83 @@ function applyDifficulty() {
   try { Engine.configure(d.time, d.depth); } catch (e) {}
 }
 
+let aiPollTimer = null;
+
+function setWinrate(aiWr) {
+  const wr = Math.max(0, Math.min(1, aiWr));
+  const blackWr = aiFirstGame ? wr : (1 - wr);
+  const whiteWr = 1 - blackWr;
+  // 优势量：0.5 → 0，1.0 → 1，从中间向两侧延伸
+  const blackAdv = Math.max(0, Math.min(1, 2 * blackWr - 1));
+  const whiteAdv = Math.max(0, Math.min(1, 2 * whiteWr - 1));
+  document.getElementById('blackSeg').style.width = (blackAdv * 100) + '%';
+  document.getElementById('whiteSeg').style.width = (whiteAdv * 100) + '%';
+  const bTag = aiFirstGame ? 'AI' : '玩家';
+  const wTag = aiFirstGame ? '玩家' : 'AI';
+  document.getElementById('blackLabel').textContent = `黑（${bTag}）${(blackWr * 100).toFixed(1)}%`;
+  document.getElementById('whiteLabel').textContent = `白（${wTag}）${(whiteWr * 100).toFixed(1)}%`;
+}
+
+function resetWinrate() {
+  document.getElementById('blackSeg').style.width = '0%';
+  document.getElementById('whiteSeg').style.width = '0%';
+  const bTag = aiFirstGame ? 'AI' : '玩家';
+  const wTag = aiFirstGame ? '玩家' : 'AI';
+  document.getElementById('blackLabel').textContent = `黑（${bTag}）—`;
+  document.getElementById('whiteLabel').textContent = `白（${wTag}）—`;
+}
+
 function aiRespond(hx, hy) {
   updateUI();
   setTimeout(() => {
     try {
-      const resp = Engine.turn(hx, hy);
-      if (!resp || resp.startsWith('ERROR')) { busy = false; updateUI('AI 异常'); return; }
-      const m = resp.match(/(-?\d+)\s*,\s*(-?\d+)/);
-      if (!m) { busy = false; updateUI('AI 响应异常'); return; }
-      if (!move(parseInt(m[1], 10), parseInt(m[2], 10))) {
-        busy = false; updateUI('AI 着法无效'); return;
-      }
-      busy = false; draw(); updateUI();
+      Engine.turn(hx, hy);   // 异步：仅写入，结果通过 pollAi 轮询
+      pollAi();
     } catch (e) { busy = false; updateUI('错误: ' + e.message); }
   }, 40);
 }
 
+function pollAi() {
+  clearInterval(aiPollTimer);
+  aiPollTimer = setInterval(() => {
+    try {
+      const wr = Engine.winrate();
+      if (wr) setWinrate(parseFloat(wr));
+    } catch (e) {}
+
+    let m = '';
+    try { m = Engine.move(); } catch (e) {}
+
+    if (m) {
+      clearInterval(aiPollTimer);
+      if (m.startsWith('ERROR')) { busy = false; updateUI('AI 异常'); return; }
+      const mm = m.match(/(-?\d+)\s*,\s*(-?\d+)/);
+      if (!mm) { busy = false; updateUI('AI 响应异常'); return; }
+      if (!move(parseInt(mm[1], 10), parseInt(mm[2], 10))) {
+        busy = false; updateUI('AI 着法无效'); return;
+      }
+      busy = false; draw(); updateUI();
+    }
+  }, 120);
+}
+
 function aiFirst() {
   if (busy) return;
-  reset(); aiFirstGame = true; busy = true; draw(); updateUI();
+  reset(); aiFirstGame = true; busy = true; resetWinrate(); draw(); updateUI();
   const d = currentDiff();
   setTimeout(() => {
     try {
       const resp = Engine.newGame(d.time, d.depth);
       if (resp.startsWith('ERROR')) { busy = false; updateUI('异常'); return; }
-      const r2 = Engine.begin();
-      if (!r2 || r2.startsWith('ERROR')) { busy = false; updateUI('AI 异常'); return; }
-      const m = r2.match(/(-?\d+)\s*,\s*(-?\d+)/);
-      if (!m) { busy = false; updateUI('AI 响应异常'); return; }
-      move(parseInt(m[1], 10), parseInt(m[2], 10));
-      busy = false; draw(); updateUI();
+      Engine.begin();   // 异步：仅写入，结果通过 pollAi 轮询
+      pollAi();
     } catch (e) { busy = false; updateUI('错误: ' + e.message); }
   }, 40);
 }
 
 function newGame() {
   if (busy) return;
-  reset(); busy = true; draw(); updateUI();
+  reset(); busy = true; resetWinrate(); draw(); updateUI();
   const d = currentDiff();
   setTimeout(() => {
     try {
@@ -530,9 +592,11 @@ function updateUI(msg) {
   document.querySelectorAll('.seg button').forEach(x => x.disabled = busy);
 
   if (st.over) {
+    const aiWin = (aiFirstGame && st.win === 1) || (!aiFirstGame && st.win === 2);
     if (st.win === 0) s.textContent = '平局';
-    else if ((aiFirstGame && st.win === 1) || (!aiFirstGame && st.win === 2)) s.textContent = 'AI 获胜';
+    else if (aiWin) s.textContent = 'AI 获胜';
     else s.textContent = '你赢了';
+    setWinrate(st.win === 0 ? 0.5 : (aiWin ? 1 : 0));
   } else if (busy) {
     s.textContent = '思考中';
   } else {

@@ -37,6 +37,17 @@
   .status { text-align: center; font-size: 0.95rem; padding: 8px;
             background: rgba(255,255,255,0.04); border-radius: 8px; }
   .status .sub { font-size: 0.75rem; color: var(--dim); margin-top: 2px; }
+  .winrate { display: flex; flex-direction: column; gap: 5px; }
+  .winrate-labels { display: flex; justify-content: space-between;
+                    font-size: 0.78rem; color: var(--dim); }
+  .winrate-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden;
+                 background: #3a3a3a; }
+  .winrate-half { width: 50%; height: 100%; display: flex; }
+  .winrate-half.left { justify-content: flex-end; border-right: 2px solid #CC3333; }
+  .winrate-half.right { justify-content: flex-start; }
+  .winrate-seg { height: 100%; width: 0; transition: width 0.15s ease; }
+  .winrate-seg.black { background: #1a1a1a; }
+  .winrate-seg.white { background: #f5f5f5; }
   .row { display: flex; gap: 6px; align-items: center; }
   .row label { font-size: 0.8rem; color: var(--dim); white-space: nowrap; }
   .row select { flex: 1; padding: 5px 6px; border-radius: 6px; border: 1px solid #444;
@@ -69,6 +80,16 @@
       <div id="status">连接中...</div>
       <div class="sub" id="count"></div>
     </div>
+    <div class="winrate">
+      <div class="winrate-labels">
+        <span id="blackLabel">黑（玩家）—</span>
+        <span id="whiteLabel">白（AI）—</span>
+      </div>
+      <div class="winrate-bar">
+        <div class="winrate-half left"><div class="winrate-seg black" id="blackSeg"></div></div>
+        <div class="winrate-half right"><div class="winrate-seg white" id="whiteSeg"></div></div>
+      </div>
+    </div>
     <div class="row">
       <label>难度</label>
       <select id="level">
@@ -98,16 +119,23 @@ const ctx = cv.getContext('2d');
 cv.width = CW; cv.height = CW;
 
 let st = null, busy = false, hover = null;
+let aiFirstFlag = false;   // AI 是否执黑
 const socket = io();
 
 socket.on('connect', () => { setStatus('已就绪'); enable(true); });
 socket.on('state', s => {
   st = s;
+  aiFirstFlag = s.aiFirst;
   const humanColor = s.aiFirst ? 2 : 1;
   // 等待 AI 落子期间保持 busy，避免玩家连下黑棋/白棋
   busy = !s.over && s.turn !== humanColor;
   updateStatus(); draw();
+  if (s.over) {
+    const aiWin = (s.aiFirst && s.win === 1) || (!s.aiFirst && s.win === 2);
+    setWinrate(s.win === 0 ? 0.5 : (aiWin ? 1 : 0));
+  }
 });
+socket.on('winrate', d => setWinrate(d.winrate));
 socket.on('error', e => { busy = false; setStatus(e.msg); enable(true); });
 socket.on('disconnect', () => { setStatus('连接断开'); enable(false); });
 
@@ -174,7 +202,7 @@ function stone(x, y, p) {
 cv.addEventListener('click', e => {
   if (!st || st.over || busy) return;
   const [x, y] = pixel(e); if (x == null) return;
-  busy = true; hover = null; setStatus('...'); enable(false);
+  busy = true; hover = null; setStatus('...'); enable(false); resetWinrate();
   socket.emit('play', {x, y});
 });
 
@@ -199,6 +227,30 @@ function pixel(e) {
 }
 
 // ---- UI ----
+function setWinrate(aiWr) {
+  const wr = Math.max(0, Math.min(1, aiWr));
+  const blackWr = aiFirstFlag ? wr : (1 - wr);
+  const whiteWr = 1 - blackWr;
+  // 优势量：0.5 → 0，1.0 → 1，从中间向两侧延伸
+  const blackAdv = Math.max(0, Math.min(1, 2 * blackWr - 1));
+  const whiteAdv = Math.max(0, Math.min(1, 2 * whiteWr - 1));
+  document.getElementById('blackSeg').style.width = (blackAdv * 100) + '%';
+  document.getElementById('whiteSeg').style.width = (whiteAdv * 100) + '%';
+  const bTag = aiFirstFlag ? 'AI' : '玩家';
+  const wTag = aiFirstFlag ? '玩家' : 'AI';
+  document.getElementById('blackLabel').textContent = `黑（${bTag}）${(blackWr * 100).toFixed(1)}%`;
+  document.getElementById('whiteLabel').textContent = `白（${wTag}）${(whiteWr * 100).toFixed(1)}%`;
+}
+
+function resetWinrate() {
+  document.getElementById('blackSeg').style.width = '0%';
+  document.getElementById('whiteSeg').style.width = '0%';
+  const bTag = aiFirstFlag ? 'AI' : '玩家';
+  const wTag = aiFirstFlag ? '玩家' : 'AI';
+  document.getElementById('blackLabel').textContent = `黑（${bTag}）—`;
+  document.getElementById('whiteLabel').textContent = `白（${wTag}）—`;
+}
+
 function setStatus(t) { document.getElementById('status').textContent = t; }
 function updateStatus() {
   if (!st) return;
@@ -221,18 +273,19 @@ function enable(on) {
 
 function newGame() {
   const lvl = document.getElementById('level').value;
-  hover = null;
+  hover = null; aiFirstFlag = false; resetWinrate();
   socket.emit('new_game', {level: lvl});
   setStatus('新游戏');
   enable(false);
 }
 
 function undo() {
+  resetWinrate();
   socket.emit('undo');
 }
 
 function aiFirst() {
-  hover = null;
+  hover = null; aiFirstFlag = true; resetWinrate();
   socket.emit('ai_first');
   setStatus('AI 先手');
   enable(false);

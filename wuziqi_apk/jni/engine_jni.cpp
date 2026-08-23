@@ -7,6 +7,9 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
+#include <sstream>
+#include <cstdio>
 #include <iostream>
 #include <unistd.h>
 
@@ -126,6 +129,10 @@ static bool g_running = false;
 static std::thread g_engine_thread;
 static std::mutex g_engine_mutex;
 
+// 实时胜率状态（由 read() 跳过 INFO 行时更新，JS 通过 readWinrate() 轮询）
+static std::atomic<float> g_winrate{-1.0f};
+static std::atomic<int>   g_depth{0};
+
 extern "C" {
 
 JNIEXPORT void JNICALL
@@ -172,17 +179,46 @@ Java_com_wuziqi_app_MainActivity_write(JNIEnv* env, jclass, jstring jcmd) {
     env->ReleaseStringUTFChars(jcmd, s);
 }
 
+// 解析引擎实时 INFO 行（"INFO DEPTH 8" / "INFO WINRATE 0.62"），更新实时胜率
+static void parseInfoLine(const std::string& line) {
+    std::istringstream iss(line);
+    std::string info, key, val;
+    if (!(iss >> info >> key >> val)) return;
+    if (info != "INFO") return;
+    if (key == "DEPTH") {
+        try { g_depth.store(std::stoi(val)); } catch (...) {}
+    } else if (key == "WINRATE") {
+        try { g_winrate.store(std::stof(val)); } catch (...) {}
+    }
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_wuziqi_app_MainActivity_read(JNIEnv* env, jclass) {
     while (g_running) {
         std::string line = g_out.getline();
         if (line.empty()) continue;
-        if (line.rfind("MESSAGE", 0) == 0 || line.rfind("INFO", 0) == 0 ||
-            line.rfind("DEBUG", 0) == 0   || line.rfind("ERROR", 0) == 0)
+        if (line.rfind("INFO", 0) == 0) { parseInfoLine(line); continue; }
+        if (line.rfind("MESSAGE", 0) == 0 || line.rfind("DEBUG", 0) == 0 ||
+            line.rfind("ERROR", 0) == 0)
             continue;
         return env->NewStringUTF(line.c_str());
     }
     return env->NewStringUTF("ERROR:engine stopped");
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_wuziqi_app_MainActivity_readWinrate(JNIEnv* env, jclass) {
+    float wr = g_winrate.load();
+    if (wr < 0.0f) return env->NewStringUTF("");
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%f", wr);
+    return env->NewStringUTF(buf);
+}
+
+JNIEXPORT void JNICALL
+Java_com_wuziqi_app_MainActivity_resetWinrate(JNIEnv*, jclass) {
+    g_winrate.store(-1.0f);
+    g_depth.store(0);
 }
 
 JNIEXPORT void JNICALL

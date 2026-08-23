@@ -34,9 +34,14 @@ class Engine:
         self._time  = 2000
         self._depth = 10
         self._noise = 0.8
+        self._info_cb    = None   # 实时信息回调 cb(depth, winrate)
+        self._info_depth = 0
 
     def configure(self, level):
         self._time, self._depth, self._noise = DIFFICULTY[level]
+
+    def set_info_callback(self, cb):
+        self._info_cb = cb
 
     def start(self):
         if not os.path.exists(ENGINE_PATH):
@@ -72,9 +77,31 @@ class Engine:
             line = line.strip()
             if not line:
                 continue
-            if line.startswith(("MESSAGE", "INFO", "DEBUG", "ERROR")):
+            if line.startswith("INFO"):
+                self._handle_info(line)
+                continue
+            if line.startswith(("MESSAGE", "DEBUG", "ERROR")):
                 continue
             return line
+
+    def _handle_info(self, line):
+        """解析引擎实时 INFO 行（INFO DEPTH / INFO WINRATE ...），驱动胜率回调。"""
+        try:
+            _, key, val = line.split(None, 2)
+        except ValueError:
+            return
+        if key == "DEPTH":
+            try:
+                self._info_depth = int(val)
+            except ValueError:
+                pass
+        elif key == "WINRATE":
+            try:
+                wr = float(val)
+            except ValueError:
+                return
+            if self._info_cb:
+                self._info_cb(self._info_depth, wr)
 
     def init(self, size=BOARD_SIZE):
         self._write(f"START {size}")
@@ -83,6 +110,8 @@ class Engine:
         self._write(f"INFO TIMEOUT_TURN {self._time}")
         self._write(f"INFO MAX_DEPTH {self._depth}")
         self._write("INFO RULE 0")
+        self._write("INFO SHOW_DETAIL 2")  # 开启实时 INFO 输出（含 WINRATE / DEPTH / EVAL）
+        self._info_depth = 0
 
     def turn(self, x, y):
         with self._lock:
@@ -283,7 +312,16 @@ def on_play(data):
             return
 
         with engine_lock:
-            ai = engine.turn(x, y)
+            sid = request.sid
+
+            def _cb(depth, wr):
+                emit("winrate", {"winrate": wr, "depth": depth}, to=sid)
+
+            engine.set_info_callback(_cb)
+            try:
+                ai = engine.turn(x, y)
+            finally:
+                engine.set_info_callback(None)
         if not ai:
             emit("error", {"msg": "AI 未响应"})
             return
@@ -309,7 +347,16 @@ def on_ai_first():
         engine.stop()
         engine.start()
         engine.init()
-        m = engine.begin()
+        sid = request.sid
+
+        def _cb(depth, wr):
+            emit("winrate", {"winrate": wr, "depth": depth}, to=sid)
+
+        engine.set_info_callback(_cb)
+        try:
+            m = engine.begin()
+        finally:
+            engine.set_info_callback(None)
     if not m:
         emit("error", {"msg": "AI 未响应"})
         return

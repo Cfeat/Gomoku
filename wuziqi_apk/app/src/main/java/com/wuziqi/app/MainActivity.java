@@ -33,6 +33,8 @@ public class MainActivity extends Activity {
     private static native boolean init();
     private static native void    write(String cmd);
     private static native String  read();
+    private static native String  readWinrate();
+    private static native void    resetWinrate();
     private static native void    end();
     private static native boolean isRunning();
 
@@ -100,6 +102,7 @@ public class MainActivity extends Activity {
         write("INFO TIMEOUT_TURN " + timeoutMs);
         write("INFO MAX_DEPTH " + maxDepth);
         write("INFO RULE 0");
+        write("INFO SHOW_DETAIL 2");   // 开启实时 INFO 输出（WINRATE / DEPTH / EVAL）
     }
 
     private void copyAssets() {
@@ -139,16 +142,31 @@ public class MainActivity extends Activity {
             applyDifficulty(timeoutMs, maxDepth);
         }
 
+        private volatile String lastMove = "";
+
         @JavascriptInterface
-        public String turn(int x, int y) {
-            write("TURN " + x + "," + y);
-            return read();
+        public void turn(int x, int y) {
+            lastMove = "";
+            resetWinrate();
+            final String cmd = "TURN " + x + "," + y;
+            new Thread(() -> { write(cmd); lastMove = read(); }).start();
         }
 
         @JavascriptInterface
-        public String begin() {
-            write("BEGIN");
-            return read();
+        public void begin() {
+            lastMove = "";
+            resetWinrate();
+            new Thread(() -> { write("BEGIN"); lastMove = read(); }).start();
+        }
+
+        @JavascriptInterface
+        public String move() {
+            return lastMove == null ? "" : lastMove;
+        }
+
+        @JavascriptInterface
+        public String winrate() {
+            return readWinrate();
         }
 
         @JavascriptInterface
