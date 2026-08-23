@@ -21,6 +21,92 @@ DIFFICULTY = {
     "hard":   (5000, 20, 0.0),
 }
 
+# ============================================================
+# 连珠禁手检测（黑方三三 / 四四 / 长连）
+# ============================================================
+_RENJU_DIRS = ((1, 0), (0, 1), (1, 1), (1, -1))
+
+
+def _run(grid, x, y, dx, dy, p, size):
+    r = 1
+    for s in (1, -1):
+        i = 1
+        while 0 <= x + dx * i * s < size and 0 <= y + dy * i * s < size \
+                and grid[y + dy * i * s][x + dx * i * s] == p:
+            r += 1
+            i += 1
+    return r
+
+
+def _five_points(grid, x, y, dx, dy, p, size):
+    pts = []
+    for d in range(-4, 5):
+        if d == 0:
+            continue
+        nx, ny = x + dx * d, y + dy * d
+        if 0 <= nx < size and 0 <= ny < size and grid[ny][nx] == 0:
+            grid[ny][nx] = p
+            if _run(grid, x, y, dx, dy, p, size) >= 5:
+                pts.append((nx, ny))
+            grid[ny][nx] = 0
+    return pts
+
+
+def _four_type(grid, x, y, dx, dy, p, size):
+    n = len(_five_points(grid, x, y, dx, dy, p, size))
+    return "F4" if n >= 2 else ("B4" if n == 1 else None)
+
+
+def _three_type(grid, x, y, dx, dy, p, size):
+    live = rush = 0
+    for d in range(-4, 5):
+        if d == 0:
+            continue
+        nx, ny = x + dx * d, y + dy * d
+        if 0 <= nx < size and 0 <= ny < size and grid[ny][nx] == 0:
+            grid[ny][nx] = p
+            ft = _four_type(grid, x, y, dx, dy, p, size)
+            grid[ny][nx] = 0
+            if ft == "F4":
+                live += 1
+            elif ft == "B4":
+                rush += 1
+    if live >= 2:
+        return "F3S"
+    if live == 1:
+        return "F3"
+    if rush >= 1:
+        return "B3"
+    return None
+
+
+def renju_forbidden(grid, x, y, player, size=BOARD_SIZE):
+    """判断黑方在 (x,y) 落子是否构成禁手（三三/四四/长连）。白方无禁手。"""
+    if player != 1:
+        return False
+    grid[y][x] = player
+    types = []
+    for dx, dy in _RENJU_DIRS:
+        run = _run(grid, x, y, dx, dy, player, size)
+        if run >= 6:
+            types.append("OL")
+        elif run == 5:
+            types.append("F5")
+        else:
+            types.append(_four_type(grid, x, y, dx, dy, player, size)
+                         or _three_type(grid, x, y, dx, dy, player, size))
+    grid[y][x] = 0
+    if "F5" in types:
+        return False
+    if "OL" in types:
+        return True
+    if sum(1 for t in types if t in ("F4", "B4")) >= 2:
+        return True
+    if sum(1 for t in types if t in ("F3", "F3S")) >= 2:
+        return True
+    return False
+
+
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "wzq-2024"
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
@@ -128,13 +214,13 @@ class Engine:
                 return float(m.group(1)) / 100.0
         return None
 
-    def init(self, size=BOARD_SIZE):
+    def init(self, size=BOARD_SIZE, renju=False):
         self._write(f"START {size}")
         if self._read() != "OK":
             raise RuntimeError("init fail")
         self._write(f"INFO TIMEOUT_TURN {self._time}")
         self._write(f"INFO MAX_DEPTH {self._depth}")
-        self._write("INFO RULE 0")
+        self._write("INFO RULE 2" if renju else "INFO RULE 0")  # 2=连珠(禁手) 0=无禁手
         self._write("INFO SHOW_DETAIL 2")  # 开启实时 INFO 输出（含 WINRATE / DEPTH / EVAL）
         self._info_depth = 0
 
@@ -191,6 +277,7 @@ class Engine:
 # ============================================================
 class Game:
     def __init__(self):
+        self.renju = False   # 是否启用连珠禁手
         self.reset()
 
     def reset(self):
@@ -212,6 +299,8 @@ class Game:
             return False, "out of bounds"
         if self.grid[y][x] != 0:
             return False, "occupied"
+        if self.renju and renju_forbidden(self.grid, x, y, player):
+            return False, "禁手：黑方不能下三三/四四/长连"
         self.grid[y][x] = player
         self.log.append({"x": x, "y": y, "p": player})
         self.turn = 3 - player
@@ -267,6 +356,7 @@ class Game:
             "win":    self.win,
             "line":   self.line,
             "aiFirst": self.ai_first,
+            "renju":   self.renju,
         }
 
 
@@ -307,7 +397,7 @@ def on_connect():
     with engine_lock:
         if not getattr(engine, "_proc", None) or engine._proc.poll() is not None:
             engine.start()
-        engine.init()
+        engine.init(renju=g.renju)
     emit("state", g.to_dict())
 
 
@@ -361,17 +451,18 @@ def on_play(data):
 
 
 @socketio.on("ai_first")
-def on_ai_first():
+def on_ai_first(data=None):
     g = _session()
     if not g or g.busy:
         return
     g.reset()
     g.ai_first = True
+    g.renju = data.get("renju", False) if data else False
 
     with engine_lock:
         engine.stop()
         engine.start()
-        engine.init()
+        engine.init(renju=g.renju)
         sid = request.sid
 
         def _cb(depth, wr):
@@ -395,6 +486,7 @@ def on_new_game(data=None):
     if not g or g.busy:
         return
     lvl = data.get("level", "medium") if data else "medium"
+    g.renju = data.get("renju", False) if data else False
     engine.configure(lvl)
     g.reset()
     with engine_lock:
@@ -403,7 +495,7 @@ def on_new_game(data=None):
         except Exception:
             pass
         engine.start()
-        engine.init()
+        engine.init(renju=g.renju)
     emit("state", g.to_dict())
 
 

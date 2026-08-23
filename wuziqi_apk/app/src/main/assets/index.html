@@ -152,6 +152,9 @@
     font-size: 0.78rem;
     color: var(--dim);
   }
+  .renju-toggle { display: flex; align-items: center; justify-content: center; gap: 6px;
+                  font-size: 0.78rem; color: var(--dim); }
+  .renju-toggle input { accent-color: var(--accent); }
   .dot {
     display: inline-block;
     width: 12px; height: 12px;
@@ -221,6 +224,10 @@
     <button class="btn-ai" id="btnAI" onclick="aiFirst()" disabled>AI 先手</button>
   </div>
 
+  <label class="renju-toggle">
+    <input type="checkbox" id="renjuCheck"> 禁手（连珠规则）
+  </label>
+
   <div class="legend">
     <span><span class="dot b"></span>玩家</span>
     <span><span class="dot w"></span>AI</span>
@@ -257,7 +264,7 @@ function setupCanvas() {
 }
 window.addEventListener('resize', setupCanvas);
 
-let st = null, busy = false, hover = null, aiFirstGame = false;
+let st = null, busy = false, hover = null, aiFirstGame = false, renjuEnabled = false;
 
 function reset() {
   st = {
@@ -270,6 +277,7 @@ function reset() {
 function move(x, y, player) {
   player = player || st.turn;
   if (st.over || x < 0 || x >= N || y < 0 || y >= N || st.grid[y][x]) return false;
+  if (renjuEnabled && renjuForbidden(x, y, player)) return false;
   st.grid[y][x] = player;
   st.log.push({ x, y, p: player });
   st.turn = 3 - player;
@@ -300,6 +308,75 @@ function check(x, y) {
     if (line.length >= 5) return line;
   }
   return null;
+}
+
+// ---- 连珠禁手检测（黑方三三/四四/长连）----
+function renjuForbidden(x, y, p) {
+  if (p !== 1) return false;
+  const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+  const run = (dx, dy) => {
+    let r = 1;
+    for (const s of [1, -1]) {
+      let i = 1;
+      while (true) {
+        const nx = x + dx*i*s, ny = y + dy*i*s;
+        if (nx >= 0 && nx < N && ny >= 0 && ny < N && st.grid[ny][nx] === p) { r++; i++; }
+        else break;
+      }
+    }
+    return r;
+  };
+  const fivePoints = (dx, dy) => {
+    const pts = [];
+    for (let d = -4; d <= 4; d++) {
+      if (d === 0) continue;
+      const nx = x + dx*d, ny = y + dy*d;
+      if (nx >= 0 && nx < N && ny >= 0 && ny < N && st.grid[ny][nx] === 0) {
+        st.grid[ny][nx] = p;
+        if (run(dx, dy) >= 5) pts.push([nx, ny]);
+        st.grid[ny][nx] = 0;
+      }
+    }
+    return pts;
+  };
+  const fourType = (dx, dy) => {
+    const n = fivePoints(dx, dy).length;
+    return n >= 2 ? 'F4' : (n === 1 ? 'B4' : null);
+  };
+  const threeType = (dx, dy) => {
+    let live = 0, rush = 0;
+    for (let d = -4; d <= 4; d++) {
+      if (d === 0) continue;
+      const nx = x + dx*d, ny = y + dy*d;
+      if (nx >= 0 && nx < N && ny >= 0 && ny < N && st.grid[ny][nx] === 0) {
+        st.grid[ny][nx] = p;
+        const ft = fourType(dx, dy);
+        st.grid[ny][nx] = 0;
+        if (ft === 'F4') live++;
+        else if (ft === 'B4') rush++;
+      }
+    }
+    if (live >= 2) return 'F3S';
+    if (live === 1) return 'F3';
+    if (rush >= 1) return 'B3';
+    return null;
+  };
+
+  st.grid[y][x] = p;
+  const types = [];
+  for (const [dx, dy] of dirs) {
+    const r = run(dx, dy);
+    if (r >= 6) types.push('OL');
+    else if (r === 5) types.push('F5');
+    else types.push(fourType(dx, dy) || threeType(dx, dy));
+  }
+  st.grid[y][x] = 0;
+
+  if (types.includes('F5')) return false;
+  if (types.includes('OL')) return true;
+  if (types.filter(t => t === 'F4' || t === 'B4').length >= 2) return true;
+  if (types.filter(t => t === 'F3' || t === 'F3S').length >= 2) return true;
+  return false;
 }
 
 function undo() {
@@ -458,6 +535,11 @@ function toBoardXY(clientX, clientY) {
 
 function playAt(x, y) {
   if (!st || st.over || busy || x == null) return;
+  if (st.grid[y][x] !== 0) return;
+  if (renjuEnabled && renjuForbidden(x, y, st.turn)) {
+    document.getElementById('status').textContent = '禁手：黑方不能下三三/四四/长连';
+    return;
+  }
   if (!move(x, y)) return;
   hover = null; busy = true; resetWinrate(); draw(); updateUI();
   if (st.over) return;
@@ -554,10 +636,12 @@ function pollAi() {
 
 function aiFirst() {
   if (busy) return;
+  renjuEnabled = document.getElementById('renjuCheck').checked;
   reset(); aiFirstGame = true; busy = true; resetWinrate(); draw(); updateUI();
   const d = currentDiff();
   setTimeout(() => {
     try {
+      Engine.setRule(renjuEnabled);
       const resp = Engine.newGame(d.time, d.depth);
       if (resp.startsWith('ERROR')) { busy = false; updateUI('异常'); return; }
       Engine.begin();   // 异步：仅写入，结果通过 pollAi 轮询
@@ -568,10 +652,12 @@ function aiFirst() {
 
 function newGame() {
   if (busy) return;
+  renjuEnabled = document.getElementById('renjuCheck').checked;
   reset(); busy = true; resetWinrate(); draw(); updateUI();
   const d = currentDiff();
   setTimeout(() => {
     try {
+      Engine.setRule(renjuEnabled);
       const resp = Engine.newGame(d.time, d.depth);
       busy = false;
       if (resp.startsWith('ERROR')) updateUI('异常');

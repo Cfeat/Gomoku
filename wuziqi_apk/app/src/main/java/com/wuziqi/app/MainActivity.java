@@ -41,6 +41,7 @@ public class MainActivity extends Activity {
 
     private WebView webView;
     private String  filesPath;
+    private volatile boolean renju = false;   // 是否启用连珠禁手
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @Override
@@ -102,7 +103,7 @@ public class MainActivity extends Activity {
     private void applyDifficulty(int timeoutMs, int maxDepth) {
         write("INFO TIMEOUT_TURN " + timeoutMs);
         write("INFO MAX_DEPTH " + maxDepth);
-        write("INFO RULE 0");
+        write(renju ? "INFO RULE 2" : "INFO RULE 0");   // 2=连珠(禁手) 0=无禁手
         write("INFO SHOW_DETAIL 2");   // 开启实时 INFO 输出（WINRATE / DEPTH / EVAL）
     }
 
@@ -141,6 +142,11 @@ public class MainActivity extends Activity {
             if (timeoutMs < 100) timeoutMs = 100;
             if (maxDepth < 1) maxDepth = 1;
             applyDifficulty(timeoutMs, maxDepth);
+        }
+
+        @JavascriptInterface
+        public void setRule(boolean r) {
+            renju = r;
         }
 
         private volatile String lastMove = "";

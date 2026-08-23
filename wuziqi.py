@@ -47,6 +47,92 @@ DIFFICULTY = {
 DEFAULT_DIFFICULTY = "中级"
 
 # ============================================================
+# 连珠禁手检测（黑方三三 / 四四 / 长连）
+# ============================================================
+_RENJU_DIRS = ((1, 0), (0, 1), (1, 1), (1, -1))
+
+
+def _run(grid, x, y, dx, dy, p, size):
+    r = 1
+    for s in (1, -1):
+        i = 1
+        while 0 <= x + dx * i * s < size and 0 <= y + dy * i * s < size \
+                and grid[y + dy * i * s][x + dx * i * s] == p:
+            r += 1
+            i += 1
+    return r
+
+
+def _five_points(grid, x, y, dx, dy, p, size):
+    pts = []
+    for d in range(-4, 5):
+        if d == 0:
+            continue
+        nx, ny = x + dx * d, y + dy * d
+        if 0 <= nx < size and 0 <= ny < size and grid[ny][nx] == 0:
+            grid[ny][nx] = p
+            if _run(grid, x, y, dx, dy, p, size) >= 5:
+                pts.append((nx, ny))
+            grid[ny][nx] = 0
+    return pts
+
+
+def _four_type(grid, x, y, dx, dy, p, size):
+    n = len(_five_points(grid, x, y, dx, dy, p, size))
+    return "F4" if n >= 2 else ("B4" if n == 1 else None)
+
+
+def _three_type(grid, x, y, dx, dy, p, size):
+    live = rush = 0
+    for d in range(-4, 5):
+        if d == 0:
+            continue
+        nx, ny = x + dx * d, y + dy * d
+        if 0 <= nx < size and 0 <= ny < size and grid[ny][nx] == 0:
+            grid[ny][nx] = p
+            ft = _four_type(grid, x, y, dx, dy, p, size)
+            grid[ny][nx] = 0
+            if ft == "F4":
+                live += 1
+            elif ft == "B4":
+                rush += 1
+    if live >= 2:
+        return "F3S"
+    if live == 1:
+        return "F3"
+    if rush >= 1:
+        return "B3"
+    return None
+
+
+def renju_forbidden(grid, x, y, player, size=BOARD_SIZE):
+    """判断黑方在 (x,y) 落子是否构成禁手（三三/四四/长连）。白方无禁手。"""
+    if player != 1:
+        return False
+    grid[y][x] = player
+    types = []
+    for dx, dy in _RENJU_DIRS:
+        run = _run(grid, x, y, dx, dy, player, size)
+        if run >= 6:
+            types.append("OL")
+        elif run == 5:
+            types.append("F5")
+        else:
+            types.append(_four_type(grid, x, y, dx, dy, player, size)
+                         or _three_type(grid, x, y, dx, dy, player, size))
+    grid[y][x] = 0
+    if "F5" in types:
+        return False          # 五连即胜，非禁手
+    if "OL" in types:
+        return True           # 长连
+    if sum(1 for t in types if t in ("F4", "B4")) >= 2:
+        return True           # 四四
+    if sum(1 for t in types if t in ("F3", "F3S")) >= 2:
+        return True           # 三三
+    return False
+
+
+# ============================================================
 # 引擎通信
 # ============================================================
 class Engine:
@@ -151,13 +237,13 @@ class Engine:
                 return float(m.group(1)) / 100.0
         return None
 
-    def init_game(self, size=BOARD_SIZE):
+    def init_game(self, size=BOARD_SIZE, renju=False):
         self._write(f"START {size}")
         if self._read() != "OK":
             raise RuntimeError("引擎初始化失败")
         self._write(f"INFO TIMEOUT_TURN {self._time}")
         self._write(f"INFO MAX_DEPTH {self._depth}")
-        self._write("INFO RULE 0")
+        self._write("INFO RULE 2" if renju else "INFO RULE 0")  # 2=连珠(禁手) 0=无禁手
         self._write("INFO SHOW_DETAIL 2")  # 开启实时 INFO 输出（含 WINRATE / DEPTH / EVAL）
         self._info_depth = 0
 
@@ -229,6 +315,7 @@ class Engine:
 class Board:
     def __init__(self, size=BOARD_SIZE):
         self.size = size
+        self.renju = False      # 是否启用连珠禁手
         self.reset()
 
     def reset(self):
@@ -248,6 +335,8 @@ class Board:
         if not (0 <= x < self.size and 0 <= y < self.size):
             return False
         if self.grid[y][x] != 0:
+            return False
+        if self.renju and renju_forbidden(self.grid, x, y, player):
             return False
         self.grid[y][x] = player
         self.log.append((x, y, player))
@@ -322,6 +411,7 @@ class App:
         self.ai_c     = 2
         self.gid      = 0
         self.diff     = DEFAULT_DIFFICULTY
+        self.renju    = False   # 是否启用连珠禁手
 
         self._winrate   = None   # 当前 AI 胜率 [0,1]；None 表示暂无数据
         self._win_depth = None   # 对应的搜索深度
@@ -355,6 +445,13 @@ class App:
                           width=5, font=("Microsoft YaHei", 9))
         cb.pack(side=tk.LEFT, padx=(0, 12))
         cb.bind("<<ComboboxSelected>>", self._on_diff_change)
+
+        self._renju_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(ctrls, text="禁手", variable=self._renju_var,
+                       font=("Microsoft YaHei", 9), bg=C_BG, fg=C_FG,
+                       activebackground=C_BG, activeforeground=C_FG,
+                       selectcolor=C_BG, highlightthickness=0,
+                       command=self._on_renju_toggle).pack(side=tk.LEFT, padx=(0, 12))
 
         for text, cmd in [("新游戏", self._new_game), ("悔棋", self._undo), ("AI 先手", self._ai_first)]:
             b = tk.Button(ctrls, text=text, font=("Microsoft YaHei", 9),
@@ -406,7 +503,7 @@ class App:
 
     def _on_ready(self):
         try:
-            self.engine.init_game()
+            self.engine.init_game(renju=self.renju)
         except Exception as e:
             self._fail(str(e))
             return
@@ -567,6 +664,10 @@ class App:
         x, y = self._at(e.x, e.y)
         if x is None:
             return
+        if self.board.renju and self.board.grid[y][x] == 0 \
+                and renju_forbidden(self.board.grid, x, y, self.board.turn):
+            self._set_status("禁手：此处为黑方禁手点（三三/四四/长连），不能落子")
+            return
         if not self.board.move(x, y):
             return
         self._redraw()
@@ -702,6 +803,7 @@ class App:
         if self.board.log and not messagebox.askyesno("新游戏", "放弃当前对局？"):
             return
         self.board.reset()
+        self.board.renju = self.renju   # 应用禁手设置
         self.busy     = False
         self.hover    = None
         self.ai_first = ai_first
@@ -771,6 +873,11 @@ class App:
     def _on_diff_change(self, e=None):
         self.diff = self._diff_var.get()
         self.engine.configure(self.diff)
+
+    def _on_renju_toggle(self):
+        self.renju = self._renju_var.get()
+        self._set_status("已启用禁手（连珠规则），将在新对局生效" if self.renju
+                         else "已关闭禁手，将在新对局生效")
 
     # ---------- 辅助 ----------
     def _set_status(self, text):

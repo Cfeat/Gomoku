@@ -52,6 +52,9 @@
   .row label { font-size: 0.8rem; color: var(--dim); white-space: nowrap; }
   .row select { flex: 1; padding: 5px 6px; border-radius: 6px; border: 1px solid #444;
                 background: #2a2a40; color: var(--fg); font-size: 0.85rem; outline: none; }
+  .renju-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.8rem;
+                  color: var(--dim); cursor: pointer; user-select: none; }
+  .renju-toggle input { accent-color: var(--accent); }
   button {
     width: 100%; padding: 10px 0; border: none; border-radius: 8px;
     font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: 0.15s;
@@ -98,6 +101,9 @@
         <option value="hard">高级</option>
       </select>
     </div>
+    <label class="renju-toggle">
+      <input type="checkbox" id="renjuCheck"> 禁手（连珠规则）
+    </label>
     <button class="btn-new" id="btnNew" onclick="newGame()" disabled>新游戏</button>
     <button class="btn-undo" id="btnUndo" onclick="undo()" disabled>悔棋</button>
     <button class="btn-ai"  id="btnAI"  onclick="aiFirst()" disabled>AI 先手</button>
@@ -273,8 +279,9 @@ function enable(on) {
 
 function newGame() {
   const lvl = document.getElementById('level').value;
+  const renju = document.getElementById('renjuCheck').checked;
   hover = null; aiFirstFlag = false; resetWinrate();
-  socket.emit('new_game', {level: lvl});
+  socket.emit('new_game', {level: lvl, renju: renju});
   setStatus('新游戏');
   enable(false);
 }
@@ -285,8 +292,9 @@ function undo() {
 }
 
 function aiFirst() {
+  const renju = document.getElementById('renjuCheck').checked;
   hover = null; aiFirstFlag = true; resetWinrate();
-  socket.emit('ai_first');
+  socket.emit('ai_first', {renju: renju});
   setStatus('AI 先手');
   enable(false);
 }
