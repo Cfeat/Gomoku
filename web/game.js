@@ -233,6 +233,16 @@ class EngineClient {
       return;
     }
 
+    // raw 请求（TRACESEARCH）：响应以 MESSAGE 前缀输出，需在过滤前匹配
+    // （对应 server.py evaluate() 使用不过滤的 _read_raw()）
+    const headRaw = this._queue[0];
+    if (headRaw && headRaw.raw && headRaw.test(line)) {
+      this._queue.shift();
+      clearTimeout(headRaw.timer);
+      headRaw.resolve(line);
+      return;
+    }
+
     // 过滤 MESSAGE/DEBUG/ERROR 行后投递给待匹配队列
     if (/^(MESSAGE|DEBUG|ERROR)/.test(line)) return;
     const entry = this._queue.shift();
@@ -244,12 +254,13 @@ class EngineClient {
     // 无等待者时丢弃（如启动横幅）
   }
 
-  _request(cmd, test, timeoutMs) {
+  _request(cmd, test, timeoutMs, raw) {
     return this._ready.then(() => new Promise((resolve, reject) => {
       const entry = {
         test: test,
         resolve: resolve,
         reject: reject,
+        raw: !!raw,
         timer: setTimeout(() => {
           const i = this._queue.indexOf(entry);
           if (i >= 0) this._queue.splice(i, 1);
@@ -301,8 +312,9 @@ class EngineClient {
   /** 评估当前局面，返回黑方胜率 [0,1]（失败返回 null） */
   async evaluate() {
     try {
+      // raw=true：Static Eval 行带 MESSAGE 前缀输出，需在过滤前匹配
       const line = await this._request('TRACESEARCH',
-        s => /Static Eval\[Black\]/.test(s), 15000);
+        s => /Static Eval\[Black\]/.test(s), 15000, true);
       const m = line.match(/Static Eval\[Black\]:.*WDL\s+([\d.]+)/);
       return m ? parseFloat(m[1]) / 100.0 : null;
     } catch (e) {
@@ -472,16 +484,16 @@ async function undo() {
     // 同步引擎内部棋盘：撤销引擎最后两手，并重新评估当前局面
     await engine.takeback(2);
     const blackWr = await engine.evaluate();
-    draw(); updateStatus();
     if (blackWr !== null) {
       const aiWr = game.aiFirst ? blackWr : (1.0 - blackWr);
       setWinrate(aiWr);
     }
   } catch (err) {
     console.error(err);
-    draw(); updateStatus();
+    setStatus('悔棋同步失败');
   } finally {
     busy = false;
+    draw(); updateStatus();  // 无论成败，恢复按钮与状态显示
   }
 }
 
