@@ -223,11 +223,15 @@ class EngineClient {
   _handleLine(line) {
     if (!line) return;
 
-    // 实时搜索信息（brief 格式），驱动胜率显示
-    let m = line.match(/^INFO DEPTH (\d+)/);
-    if (m) { this._infoDepth = parseInt(m[1], 10); return; }
-    m = line.match(/^INFO WINRATE ([\d.]+)/);
-    if (m) { this._onInfo(this._infoDepth, parseFloat(m[1])); return; }
+    // 所有 INFO 开头的行均为实时搜索信息，全部分流（对应 server.py _read 的
+    // line.startswith("INFO") 分支）——否则 INFO PV/BESTLINE 等会闯入响应队列
+    if (/^INFO /.test(line)) {
+      let m = line.match(/^INFO DEPTH (\d+)/);
+      if (m) { this._infoDepth = parseInt(m[1], 10); return; }
+      m = line.match(/^INFO WINRATE ([\d.]+)/);
+      if (m) this._onInfo(this._infoDepth, parseFloat(m[1]));
+      return;
+    }
 
     // 过滤 MESSAGE/DEBUG/ERROR 行后投递给待匹配队列
     if (/^(MESSAGE|DEBUG|ERROR)/.test(line)) return;
