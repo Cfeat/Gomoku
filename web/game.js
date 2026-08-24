@@ -244,6 +244,8 @@ class EngineClient {
     return this._ready.then(() => new Promise((resolve, reject) => {
       const entry = {
         test: test,
+        resolve: resolve,
+        reject: reject,
         timer: setTimeout(() => {
           const i = this._queue.indexOf(entry);
           if (i >= 0) this._queue.splice(i, 1);
