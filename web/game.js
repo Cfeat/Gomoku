@@ -500,6 +500,7 @@ async function undo() {
 async function aiFirst() {
   if (!engine) return;
   const renju = document.getElementById('renjuCheck').checked;
+  game.aiFirst = true;  // 先置标志，resetWinrate 才能正确显示「黑（AI）」
   hover = null; resetWinrate();
   busy = true; setStatus('AI 先手'); enable(false);
 
