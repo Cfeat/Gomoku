@@ -1,6 +1,8 @@
 # 五子棋
 
-基于 [Rapfi](https://github.com/dhbloo/rapfi) 引擎的人机五子棋，提供 **Windows 桌面版**、**本地网页版** 与 **Android APK**。
+基于 [Rapfi](https://github.com/dhbloo/rapfi) 引擎的人机五子棋，提供 **Windows 桌面版**、**本地网页版**、**在线网页版（GitHub Pages）** 与 **Android APK**。
+
+**🎮 在线试玩**：<https://cfeat.github.io/Gomoku/>（Rapfi 引擎以 WebAssembly 形式在浏览器中运行，无需安装，支持手机浏览器）
 
 ## 功能
 
@@ -18,7 +20,8 @@ Wuziqi/
 ├── build_package.py       # 打包单文件 exe（PyInstaller）
 ├── run.bat / run_web.bat
 ├── engine/                # Rapfi Windows 引擎 + 权重 + config
-├── wuziqi_web/            # Flask + Socket.IO 网页版
+├── wuziqi_web/            # Flask + Socket.IO 网页版（本地）
+├── web/                   # 在线版静态站点（GitHub Pages，WASM 引擎）
 ├── wuziqi_apk/            # Android 工程与打包脚本
 ├── dependency/            # （本地）Android SDK / NDK 等，不上传
 └── rapfi/                 # （本地）Rapfi 源码，不上传，需自行 clone
@@ -57,6 +60,14 @@ run_web.bat
 ```
 
 浏览器打开终端提示的地址（默认本机 Flask 服务）。网页版同样依赖 `engine/` 下的 Windows 引擎。
+
+## 在线网页版（GitHub Pages）
+
+`web/` 目录是纯静态的在线版：Rapfi 引擎通过 Emscripten 编译为 WebAssembly（单线程 + SIMD128），在浏览器的 Web Worker 中运行，无需任何服务端。
+
+- 由 [.github/workflows/deploy-pages.yml](.github/workflows/deploy-pages.yml) 自动构建部署：每次 `web/` 有改动推送到 `main`，CI 会 clone Rapfi 源码与权重、用 emsdk 编译 WASM 并发布到 GitHub Pages
+- 引擎配置见 `web/engine-config.toml`（坐标模式 `none`、消息格式 `brief`，与前端协议解析一致）
+- 首次加载需下载约 40 MB 权重数据，之后有浏览器缓存
 
 ## Android APK
 

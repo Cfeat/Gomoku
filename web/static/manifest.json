@@ -1,0 +1,22 @@
+{
+  "name": "五子棋",
+  "short_name": "五子棋",
+  "description": "AI Gomoku - 基于 Rapfi 引擎",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1e1e2e",
+  "theme_color": "#282840",
+  "icons": [
+    {
+      "src": "./static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "./static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>五子棋</title>
+<meta name="description" content="基于 Rapfi 引擎的人机五子棋 — 浏览器版，AI 在本地 WebAssembly 中运行">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="五子棋">
+<link rel="manifest" href="./static/manifest.json">
+<link rel="apple-touch-icon" href="./static/icon-192.png">
+<link rel="icon" href="./static/icon-192.png">
+<style>
+  :root {
+    --bg: #1e1e2e; --panel: #282840; --accent: #c77d5a;
+    --fg: #ddd; --dim: #888; --board: #DEB887; --line: #5D4037;
+    --btn: #383860; --btn-hover: #4a4a80;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--fg);
+    display: flex; justify-content: center; align-items: center;
+    min-height: 100vh; user-select: none;
+  }
+  .wrap {
+    display: flex; gap: 20px; align-items: flex-start; padding: 20px;
+  }
+  @media (max-width: 760px) { .wrap { flex-direction: column; align-items: center; } }
+  canvas { display: block; cursor: pointer; border-radius: 8px;
+           box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
+  .side {
+    width: 200px; background: var(--panel); border-radius: 14px;
+    padding: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .side h1 { font-size: 1.5rem; text-align: center; font-weight: 600; letter-spacing: 4px; }
+  .status { text-align: center; font-size: 0.95rem; padding: 8px;
+            background: rgba(255,255,255,0.04); border-radius: 8px; }
+  .status .sub { font-size: 0.75rem; color: var(--dim); margin-top: 2px; }
+  .winrate { display: flex; flex-direction: column; gap: 5px; }
+  .winrate-labels { display: flex; justify-content: space-between;
+                    font-size: 0.78rem; color: var(--fg); font-weight: 500; }
+  .winrate-bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden;
+                 background: #4a4a4a; box-shadow: inset 0 1px 2px rgba(0,0,0,0.4); }
+  .winrate-half { width: 50%; height: 100%; display: flex; }
+  .winrate-half.left { justify-content: flex-end; border-right: 2px solid #CC3333; }
+  .winrate-half.right { justify-content: flex-start; }
+  .winrate-seg { height: 100%; width: 0; transition: width 0.2s ease; }
+  .winrate-seg.black { background: linear-gradient(180deg, #3a3a3a, #0d0d0d); }
+  .winrate-seg.white { background: linear-gradient(180deg, #ffffff, #d0d0d0); }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row label { font-size: 0.8rem; color: var(--dim); white-space: nowrap; }
+  .row select { flex: 1; padding: 5px 6px; border-radius: 6px; border: 1px solid #444;
+                background: #2a2a40; color: var(--fg); font-size: 0.85rem; outline: none; }
+  .renju-toggle { display: flex; align-items: center; gap: 6px; font-size: 0.8rem;
+                  color: var(--dim); cursor: pointer; user-select: none; }
+  .renju-toggle input { accent-color: var(--accent); }
+  button {
+    width: 100%; padding: 10px 0; border: none; border-radius: 8px;
+    font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: 0.15s;
+    letter-spacing: 1px;
+  }
+  .btn-new { background: var(--btn); color: var(--fg); }
+  .btn-new:hover { background: var(--btn-hover); }
+  .btn-undo { background: #444468; color: var(--fg); }
+  .btn-undo:hover { background: #555580; }
+  .btn-ai { background: var(--accent); color: #fff; }
+  .btn-ai:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  .info { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--dim); }
+  .dot { display: inline-block; width: 13px; height: 13px; border-radius: 50%;
+         vertical-align: middle; margin-right: 3px; }
+  .dot.b { background: radial-gradient(circle at 35% 35%, #555, #111); }
+  .dot.w { background: radial-gradient(circle at 35% 35%, #fff, #bbb); border: 1px solid #999; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="board"></canvas>
+  <div class="side">
+    <h1>五子棋</h1>
+    <div class="status">
+      <div id="status">正在加载引擎...</div>
+      <div class="sub" id="count"></div>
+    </div>
+    <div class="winrate">
+      <div class="winrate-labels">
+        <span id="blackLabel">黑（玩家）—</span>
+        <span id="whiteLabel">白（AI）—</span>
+      </div>
+      <div class="winrate-bar">
+        <div class="winrate-half left"><div class="winrate-seg black" id="blackSeg"></div></div>
+        <div class="winrate-half right"><div class="winrate-seg white" id="whiteSeg"></div></div>
+      </div>
+    </div>
+    <div class="row">
+      <label>难度</label>
+      <select id="level">
+        <option value="easy">初级</option>
+        <option value="medium" selected>中级</option>
+        <option value="hard">高级</option>
+      </select>
+    </div>
+    <label class="renju-toggle">
+      <input type="checkbox" id="renjuCheck"> 禁手（连珠规则）
+    </label>
+    <button class="btn-new" id="btnNew" onclick="newGame()" disabled>新游戏</button>
+    <button class="btn-undo" id="btnUndo" onclick="undo()" disabled>悔棋</button>
+    <button class="btn-ai"  id="btnAI"  onclick="aiFirst()" disabled>AI 先手</button>
+    <div class="info">
+      <span><span class="dot b"></span>玩家</span>
+      <span><span class="dot w"></span>AI</span>
+    </div>
+  </div>
+</div>
+
+<script src="./game.js"></script>
+</body>
+</html>

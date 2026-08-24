@@ -1,0 +1,94 @@
+name: Deploy GitHub Pages
+
+# 构建 Rapfi WASM 引擎并部署纯静态网页版到 GitHub Pages
+# 产物: https://<owner>.github.io/Gomoku/
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone Rapfi engine source
+        run: git clone --depth 1 https://github.com/dhbloo/rapfi.git rapfi
+
+      # Networks 是独立权重仓库（Rapfi 的 submodule），单独浅克隆
+      - name: Clone Rapfi networks (weights)
+        run: git clone --depth 1 https://github.com/dhbloo/rapfi-networks.git rapfi/Networks
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: "3.1.64"
+          actions-cache-folder: "emsdk-cache"
+
+      # 用网页版自定义配置替换上游预载清单：
+      #   coord_conversion_mode = "none" / message_mode = "brief"，
+      # 与前端 game.js 协议解析保持一致
+      - name: Override WASM preloads with custom engine config
+        run: |
+          cp web/engine-config.toml rapfi/Networks/wuziqi-config.toml
+          cat > rapfi/Networks/wasm_preloads.txt << 'EOF'
+          wuziqi-config.toml@config.toml
+          classical@/
+          mix9svq@/
+          EOF
+
+      - name: Build Rapfi WASM (single-thread, simd128)
+        run: |
+          cd rapfi/Rapfi
+          emcmake cmake -B build-wasm \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DNO_MULTI_THREADING=ON \
+            -DNO_COMMAND_MODULES=ON \
+            -DUSE_WASM_SIMD=ON
+          cmake --build build-wasm --target rapfi --parallel 4
+
+      - name: Assemble site
+        run: |
+          mkdir -p site/static
+          cp web/index.html web/game.js web/engine-worker.js site/
+          cp web/static/* site/static/
+          cp rapfi/Rapfi/build-wasm/rapfi-single-simd128.js \
+             rapfi/Rapfi/build-wasm/rapfi-single-simd128.wasm \
+             rapfi/Rapfi/build-wasm/rapfi-single-simd128.data site/
+          ls -la site/
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
