@@ -445,8 +445,7 @@ async function playMove(x, y) {
     }
   } catch (err) {
     console.error(err);
-    setStatus('AI 未响应');
-    return;
+    setStatus('AI 未响应：' + (err.message || err));
   } finally {
     busy = false;
   }
@@ -467,7 +466,7 @@ async function newGame() {
     game.reset();
   } catch (err) {
     console.error(err);
-    setStatus('引擎未响应');
+    setStatus('引擎未响应：' + (err.message || err) + '（可尝试刷新或更换浏览器）');
   } finally {
     busy = false;
   }
@@ -514,7 +513,7 @@ async function aiFirst() {
     game.move(m[0], m[1]);
   } catch (err) {
     console.error(err);
-    setStatus('AI 未响应');
+    setStatus('AI 未响应：' + (err.message || err));
   } finally {
     busy = false;
   }
