@@ -192,10 +192,10 @@ class EngineClient {
       if (this._readyReject) { this._readyReject(new Error(e.message || 'worker error')); }
     };
 
-    // 引擎加载兜底超时（含 40MB 权重下载时间）
+    // 引擎加载兜底超时（含 40MB 权重下载时间；弱网/直连 GitHub 不稳时可能触发）
     this._loadTimer = setTimeout(() => {
-      if (this._readyReject) this._readyReject(new Error('引擎加载超时'));
-    }, 300000);
+      if (this._readyReject) this._readyReject(new Error('引擎加载超时，请检查网络后刷新重试'));
+    }, 90000);
   }
 
   _onMessage(msg) {
